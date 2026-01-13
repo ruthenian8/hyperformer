@@ -6,11 +6,16 @@ import logging
 import os
 from pathlib import Path
 
-from transformers import AutoTokenizer, HfArgumentParser, set_seed
+from transformers import AutoTokenizer, AutoConfig, HfArgumentParser, set_seed
 from transformers.trainer_utils import EvaluationStrategy
 
 from hyperformer.third_party.models import T5Config, T5ForConditionalGeneration
 from hyperformer.third_party.trainers import T5Trainer
+from hyperformer.models.t5gemma_with_adapters import (
+    is_t5gemma_config,
+    T5GemmaForConditionalGenerationWithAdapters,
+    get_model_hidden_size,
+)
 from hyperformer.adapters import AdapterController, AutoAdapterConfig
 from hyperformer.data import AutoTask
 from hyperformer.third_party.utils import TaskCollator, check_output_dir
@@ -77,11 +82,12 @@ def main():
     # Distributed training:
     # The .from_pretrained methods guarantee that only one local process can concurrently
     # download model & vocab.
-    config = T5Config.from_pretrained(
-        model_args.config_name if model_args.config_name else \
-            model_args.model_name_or_path,
-        cache_dir=model_args.cache_dir,
-    )
+    config_path = model_args.config_name if model_args.config_name else model_args.model_name_or_path
+    auto_config = AutoConfig.from_pretrained(config_path, cache_dir=model_args.cache_dir)
+    if getattr(auto_config, "model_type", None) == "t5":
+        config = T5Config.from_pretrained(config_path, cache_dir=model_args.cache_dir)
+    else:
+        config = auto_config
     extra_model_params = ("encoder_layerdrop", "decoder_layerdrop", "dropout",
                           "attention_dropout",  "train_adapters")
     for p in extra_model_params:
@@ -92,7 +98,7 @@ def main():
     # Gets the adapter config and updates the specified parameters.
     if training_args.train_adapters:
         adapter_config = AutoAdapterConfig.get(adapter_args.adapter_config_name)
-        adapter_config.input_dim = config.d_model
+        adapter_config.input_dim = get_model_hidden_size(config)
         adapter_config.tasks = data_args.tasks
         adapter_config.task_to_adapter = {task:adapter for task, adapter in zip(data_args.tasks, data_args.adapters)} if data_args.adapters is not None else None
         # If this is a parametric task embedding this mapping makes sense, but in case we use any task embeddings,
@@ -127,20 +133,38 @@ def main():
             model_args.model_name_or_path,
         cache_dir=model_args.cache_dir,
     )
-    if model_args.not_load_t5_checkpoint:
-        model = T5ForConditionalGeneration(config=config, adapter_config=adapter_config)
-    else:
-        last_checkpoint_path = training_args.output_dir
-        model_path = model_args.model_name_or_path if ((training_args.optimize_from_scratch and not training_args.optimize_from_scratch_with_loading_model) or not os.path.exists(os.path.join(last_checkpoint_path, 'pytorch_model.bin')))\
-            else last_checkpoint_path
-        logger.warning("model path loaded from : %s", model_path)
-        model = T5ForConditionalGeneration.from_pretrained(
+    def _load_model(model_path: str, config_obj):
+        if is_t5gemma_config(config_obj):
+            if model_args.not_load_t5_checkpoint:
+                return T5GemmaForConditionalGenerationWithAdapters(config=config_obj, adapter_config=adapter_config)
+            return T5GemmaForConditionalGenerationWithAdapters.from_pretrained(
+                model_path,
+                config=config_obj,
+                cache_dir=model_args.cache_dir,
+                adapter_config=adapter_config,
+            )
+        if model_args.not_load_t5_checkpoint:
+            return T5ForConditionalGeneration(config=config_obj, adapter_config=adapter_config)
+        return T5ForConditionalGeneration.from_pretrained(
             model_path,
             from_tf=".ckpt" in model_args.model_name_or_path,
-            config=config,
+            config=config_obj,
             cache_dir=model_args.cache_dir,
-            adapter_config=adapter_config
+            adapter_config=adapter_config,
         )
+
+    if model_args.not_load_t5_checkpoint:
+        model = _load_model(model_args.model_name_or_path, config)
+    else:
+        last_checkpoint_path = training_args.output_dir
+        model_path = (
+            model_args.model_name_or_path
+            if ((training_args.optimize_from_scratch and not training_args.optimize_from_scratch_with_loading_model)
+                or not os.path.exists(os.path.join(last_checkpoint_path, "pytorch_model.bin")))
+            else last_checkpoint_path
+        )
+        logger.warning("model path loaded from : %s", model_path)
+        model = _load_model(model_path, config)
 
     # set num_beams for evaluation
     if data_args.eval_beams is None:
@@ -241,16 +265,10 @@ def main():
             # set save_total = 1 so the best model is loaded here.
             # if not exists returns the path to the output_dir.
             last_checkpoint_path = get_last_checkpoint_path(training_args.output_dir)
-            config = T5Config.from_pretrained(
-                last_checkpoint_path,
-                cache_dir=model_args.cache_dir)
-            model = T5ForConditionalGeneration.from_pretrained(
-                last_checkpoint_path,
-                from_tf=".ckpt" in training_args.output_dir,
-                config=config,
-                cache_dir=model_args.cache_dir,
-                adapter_config=adapter_config
-            )
+            config = AutoConfig.from_pretrained(last_checkpoint_path, cache_dir=model_args.cache_dir)
+            if getattr(config, "model_type", None) == "t5":
+                config = T5Config.from_pretrained(last_checkpoint_path, cache_dir=model_args.cache_dir)
+            model = _load_model(last_checkpoint_path, config)
             # NOTE: if trainer is not re-defined, there is a bug in the codes, that making
             # huggingface codes does not using the best checkpoint.
             trainer = T5Trainer(
