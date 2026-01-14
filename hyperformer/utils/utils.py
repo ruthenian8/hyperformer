@@ -7,7 +7,7 @@ from hyperformer.third_party.utils import (
     freeze_embeds,
     freeze_params,
     save_json)
-from transformers.modeling_t5 import T5LayerNorm
+from transformers.models.t5.modeling_t5 import T5LayerNorm
 
 from hyperformer.adapters import (AdapterController, MetaAdapterController, 
                               AdapterLayersHyperNetController, AdapterLayersOneHyperNetController)

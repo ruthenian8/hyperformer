@@ -6,8 +6,14 @@ import warnings
 from torch import nn
 from torch.nn import CrossEntropyLoss
 from transformers.modeling_outputs import BaseModelOutput
-from transformers.modeling_t5 import (T5PreTrainedModel, T5LayerNorm, T5Block,
-                                      T5DenseReluDense, T5Attention, T5LayerCrossAttention)
+from transformers.models.t5.modeling_t5 import (
+    T5PreTrainedModel,
+    T5LayerNorm,
+    T5Block,
+    T5DenseActDense,
+    T5Attention,
+    T5LayerCrossAttention,
+)
 from transformers.utils import logging
 
 from hyperformer.adapters import (AutoAdapterController, MetaAdapterConfig,
@@ -26,7 +32,7 @@ logger = logging.get_logger(__name__)
 class T5LayerFF(nn.Module):
     def __init__(self, config, adapter_config=None):
         super().__init__()
-        self.DenseReluDense = T5DenseReluDense(config)
+        self.DenseReluDense = T5DenseActDense(config)
         self.train_adapters = config.train_adapters
         if self.train_adapters:
             self.unique_hyper_net = True if isinstance(adapter_config, MetaAdapterConfig) and \

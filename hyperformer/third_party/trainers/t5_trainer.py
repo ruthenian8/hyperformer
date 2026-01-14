@@ -12,12 +12,12 @@ from torch.utils.data.dataloader import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 from transformers import PreTrainedModel, logging
 from transformers import Trainer
-from transformers.configuration_fsmt import FSMTConfig
-from transformers.file_utils import is_torch_tpu_available
+from transformers.models.fsmt.configuration_fsmt import FSMTConfig
+from transformers.utils.import_utils import is_torch_xla_available
 from transformers.integrations import (hp_params)
+from torch.optim import AdamW
 from transformers.optimization import (
     Adafactor,
-    AdamW,
     get_constant_schedule,
     get_constant_schedule_with_warmup,
     get_cosine_schedule_with_warmup,
@@ -31,7 +31,7 @@ from transformers.trainer_utils import (set_seed)
 
 # Check if Pytorch version >= 1.6 to switch between Native AMP and Apex
 if version.parse(torch.__version__) < version.parse("1.6"):
-    from transformers.file_utils import is_apex_available
+    from transformers.utils.import_utils import is_apex_available
 
     if is_apex_available():
         from apex import amp
@@ -44,7 +44,7 @@ if version.parse(torch.__version__) < version.parse("1.2"):
 else:
     _use_ddp_no_sync = True
 
-if is_torch_tpu_available():
+if is_torch_xla_available():
     import torch_xla.core.xla_model as xm
     import torch_xla.debug.metrics as met
     import torch_xla.distributed.parallel_loader as pl
@@ -67,7 +67,7 @@ arg_to_scheduler = {
     "constant_w_warmup": get_constant_schedule_with_warmup,
 }
 
-if is_torch_tpu_available():
+if is_torch_xla_available():
     import torch_xla.core.xla_model as xm
     import torch_xla.debug.metrics as met
 
